@@ -1,6 +1,9 @@
 #include "poisson_surface_reconstruction.h"
+#include "fd_interpolate.h"
+#include "fd_grad.h"
 #include <igl/copyleft/marching_cubes.h>
 #include <algorithm>
+#include <iostream>
 
 void poisson_surface_reconstruction(
     const Eigen::MatrixXd & P,
@@ -47,6 +50,32 @@ void poisson_surface_reconstruction(
   ////////////////////////////////////////////////////////////////////////////
   // Add your code here
   ////////////////////////////////////////////////////////////////////////////
+  Eigen::SparseMatrix<double> Wx, Wy, Wz;
+  // Staggered interpolation grids
+  fd_interpolate(nx - 1, ny, nz, h, corner + Eigen::RowVector3d(0.5 * h, 0, 0), P, Wx);
+  fd_interpolate(nx, ny - 1, nz, h, corner + Eigen::RowVector3d(0, 0.5 * h, 0), P, Wy);
+  fd_interpolate(nx, ny, nz - 1, h, corner + Eigen::RowVector3d(0, 0, 0.5 * h), P, Wz);
+
+  // Blend normals
+  Eigen::VectorXd v(Wx.cols() + Wy.cols() + Wz.cols());
+  v << Wx.transpose() * N.col(0), Wy.transpose() * N.col(1) ,Wz.transpose() * N.col(2);
+
+  // Grad
+  Eigen::SparseMatrix<double>  G;
+  fd_grad(nx, ny, nz, h, G);
+
+  // G^T * G * g = G^T * v 
+  // Eigen::ConjugateGradient<Eigen::SparseMatrix<double>> solver;
+  Eigen::BiCGSTAB<Eigen::SparseMatrix<double>> solver;
+  solver.compute(G.transpose() * G);
+  g = solver.solve(G.transpose() * v);
+
+  // determine sigma
+  Eigen::SparseMatrix<double> W;
+  fd_interpolate(nx, ny, nz, h, corner, P, W);
+  double sigma = (W * g).sum() / n;
+  // std::cout << "this is sigma: " << sigma << std::endl;
+  g.array() -= sigma;
 
   ////////////////////////////////////////////////////////////////////////////
   // Run black box algorithm to compute mesh from implicit function: this
